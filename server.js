@@ -30,7 +30,7 @@ async function sendWhatsAppTemplate(toNumber, leadName, assignedTo, location, re
     to: phoneNumber,
     type: "template",
     template: {
-      name: "lead_message",  // ✅ Your approved template name
+      name: "lead_detail",  // ✅ Your approved template name
       language: { code: "en_US" },
       components: [
         {
