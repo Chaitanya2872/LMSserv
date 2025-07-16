@@ -30,7 +30,7 @@ async function sendWhatsAppTemplate(toNumber, leadName, assignedTo, location, re
     to: phoneNumber,
     type: "template",
     template: {
-      name: "lead_details",  // ✅ Your approved template name
+      name: "lead_message",  // ✅ Your approved template name
       language: { code: "en_US" },
       components: [
         {
@@ -101,7 +101,7 @@ async function sendWhatsAppOTP(phoneNumber, otp) {
       sub_type: "url",
       index: "0",
       parameters: [
-        { type: "text", text: `https://yourapp.com` }
+        { type: "text", text: `` }
       ]
     }
   ]
