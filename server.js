@@ -72,66 +72,42 @@ async function sendWhatsAppTemplate(toNumber, leadName, assignedTo, location, re
 
 
 
-async function sendWhatsAppOTP(phoneNumber, otp) {
-  try {
-    console.log(`✅ Sending OTP to WhatsApp for number: ${phoneNumber}`);
-
-    const response = await axios({
-      method: "POST",
-      url: `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
-      headers: {
-        Authorization: `Bearer ${ACCESS_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      data: {
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
-        to: phoneNumber,
-        type: "template",
-        template: {
-  name: "send_otpmessage",
-  language: { code: "en_US" },
-  components: [
-    {
-      type: "body",
-      parameters: [{ type: "text", text: otp }]
-    },
-    {
-      type: "button",
-      sub_type: "url",
-      index: "0",
-      parameters: [
-        { type: "text", text: `` }
+async function sendWhatsAppOTP(phoneNumber, otpCode) {
+  const payload = {
+    messaging_product: "whatsapp",
+    to: phoneNumber,
+    type: "template",
+    template: {
+      name: "otp_login_code", // ✅ Template name as seen in your Meta dashboard
+      language: { code: "en_US" },
+      components: [
+        {
+          type: "body",
+          parameters: [{ type: "text", text: otpCode }]
+        }
       ]
     }
-  ]
-}
-      },
-      timeout: 15000,
-    });
+  };
 
-    console.log("✅ OTP sent successfully");
-    return { success: true, data: response.data };
+  try {
+    const res = await axios.post(
+      `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
 
-  } catch (error) {
-    console.error("❌ Error sending WhatsApp OTP:", error.message);
-
-    if (error.response) {
-      console.error("Status:", error.response.status);
-      console.error("Error Data:", JSON.stringify(error.response.data, null, 2));
-    } else {
-      console.error("No response from WhatsApp API");
-    }
-
-    return { success: false, error: error.message || "Failed to send OTP" };
+    console.log(`✅ OTP ${otpCode} sent to ${phoneNumber}`);
+    return true;
+  } catch (err) {
+    console.error("❌ Failed to send OTP:", err.response?.data || err.message);
+    return false;
   }
 }
-
-
-
-
-
-
 
 
 
@@ -342,78 +318,50 @@ async function createUserSheetIfNotExists(userFullName, userRole) {
 }
 
 // 1️⃣ API: Send OTP on Registration
-app.post('/api/register', async (req, res) => {
-  try {
-    const { fullName, email, mobile, password, role } = req.body;
+app.post('/register', async (req, res) => {
+  const { fullName, email, mobile, password, role } = req.body;
 
-    if (!fullName || !email || !mobile || !password || !role) {
-      return res.status(400).json({ error: 'All fields are required' });
-    }
-
-    const otp = generateOTP();
-    otpStore.set(mobile, otp);  // ✅ Store OTP temporarily (should expire after X minutes in real app)
-
-    const otpResult = await sendWhatsAppOTP(mobile, otp);
-    if (!otpResult.success) {
-      return res.status(500).json({ error: 'Failed to send OTP' });
-    }
-
-    res.status(200).json({ message: 'OTP sent successfully' });
-
-  } catch (err) {
-    console.error('❌ Registration error:', err);
-    res.status(500).json({ error: 'Failed to send OTP' });
+  if (!fullName || !email || !mobile || !password || !role) {
+    return res.status(400).json({ error: 'All fields are required' });
   }
+
+  const otp = generateOTP();
+  OTP_STORE.set(mobile, otp);
+
+  const success = await sendWhatsAppOTP(`+91${mobile}`, otp);
+  if (!success) return res.status(500).json({ error: 'Failed to send OTP' });
+
+  return res.json({ message: 'OTP sent successfully' });
 });
 
+// 👉 POST /verify-otp — verifies OTP and returns mocked token
+app.post('/verify-otp', (req, res) => {
+  const { mobile, otp, fullName, role } = req.body;
 
-// 2️⃣ API: Verify OTP and Create User or Login if Already Exists
-app.post('/api/verify-otp', async (req, res) => {
-  try {
-    const { fullName, email, mobile, password, role, otp } = req.body;
-    if (!otp || otpStore.get(mobile) !== otp) {
-      return res.status(400).json({ error: 'Invalid OTP' });
-    }
-
-    otpStore.delete(mobile);
-
-    const userResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId: CONFIG.USERS_SHEET_ID,
-      range: 'Users!A:H'
-    });
-
-    const users = parseSheetData(userResponse.data.values);
-    let user = users.find(u => u.Email.toLowerCase() === email.toLowerCase());
-
-    if (!user) {
-      const passwordHash = await bcrypt.hash(password, 10);
-      const userId = generateUserId();
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: CONFIG.USERS_SHEET_ID,
-        range: 'Users!A:H',
-        valueInputOption: 'RAW',
-        resource: { values: [[userId, fullName, email, passwordHash, role, new Date().toISOString().split('T')[0], 'Active']] }
-      });
-      await createUserSheetIfNotExists(fullName, role);
-      user = { ID: userId, FullName: fullName, Email: email, Role: role };
-    }
-
-    const token = jwt.sign(
-      { id: user.ID, name: user.FullName, email: user.Email, role: user.Role },
-      process.env.JWT_SECRET || 'fallback_secret',
-      { expiresIn: '24h' }
-    );
-
-    res.json({
-      token,
-      user: { id: user.ID, name: user.FullName, email: user.Email, role: user.Role },
-      message: 'Verified and logged in'
-    });
-
-  } catch (err) {
-    console.error('OTP verification error:', err);
-    res.status(500).json({ error: 'Verification failed' });
+  if (!mobile || !otp) {
+    return res.status(400).json({ error: 'Mobile and OTP are required' });
   }
+
+  const storedOtp = OTP_STORE.get(mobile);
+  if (!storedOtp) {
+    return res.status(400).json({ error: 'No OTP found for this number' });
+  }
+
+  if (storedOtp !== otp) {
+    return res.status(400).json({ error: 'Invalid OTP' });
+  }
+
+  OTP_STORE.delete(mobile); // Cleanup OTP after verification
+
+  return res.json({
+    message: 'Registration & Login successful',
+    token: 'mocked-jwt-token',
+    user: {
+      id: mobile,
+      name: fullName,
+      role: role
+    }
+  });
 });
 
 
