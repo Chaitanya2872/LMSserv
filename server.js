@@ -73,51 +73,67 @@ async function sendWhatsAppTemplate(toNumber, leadName, assignedTo, location, re
 
 
 async function sendWhatsAppOTP(phoneNumber, otpCode) {
+  const sanitizedPhone = sanitizePhoneNumber(phoneNumber);
+  if (!sanitizedPhone) {
+    console.warn(`⚠️ Invalid phone number for OTP: ${phoneNumber}`);
+    return false;
+  }
+
   const payload = {
     messaging_product: "whatsapp",
-    to: phoneNumber,
+    to: sanitizedPhone,
     type: "template",
     template: {
-      name: "otp_login_code", // ✅ Template name as seen in your Meta dashboard
+      name: "ot", // Your actual template name
       language: { code: "en_US" },
       components: [
         {
           type: "body",
-          parameters: [{ type: "text", text: otpCode }]
+          parameters: [
+            { 
+              type: "text", 
+              text: otpCode.toString() 
+            }
+          ]
         }
       ]
     }
   };
 
   try {
-    const res = await axios.post(
+    const response = await fetch(
       `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
-      payload,
       {
+        method: "POST",
         headers: {
           Authorization: `Bearer ${ACCESS_TOKEN}`,
           "Content-Type": "application/json"
-        }
+        },
+        body: JSON.stringify(payload)
       }
     );
 
-    console.log(`✅ OTP ${otpCode} sent to ${phoneNumber}`);
-    return true;
+    const result = await response.json();
+
+    if (response.ok && result.messages) {
+      console.log(`✅ OTP ${otpCode} sent successfully to ${sanitizedPhone}`);
+      return true;
+    } else {
+      console.error("❌ WhatsApp OTP API error:", result);
+      return false;
+    }
   } catch (err) {
-    console.error("❌ Failed to send OTP:", err.response?.data || err.message);
+    console.error("❌ Exception sending WhatsApp OTP:", err.message);
     return false;
   }
 }
 
-
-
-// In-memory OTP Store
-const otpStore = new Map();
+// ✅ FIXED: Use consistent naming for OTP Store
+const OTP_STORE = new Map();
 
 function generateOTP() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
-
 
 
 
@@ -363,6 +379,7 @@ app.post('/verify-otp', (req, res) => {
     }
   });
 });
+
 
 
 // 1. Modified Authentication Route with Auto User Creation
