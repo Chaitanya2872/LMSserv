@@ -555,7 +555,7 @@ async function createUserSheetIfNotExists(userFullName, userRole) {
 
 
 // 1️⃣ API: Send OTP on Registration
-app.post('/register', async (req, res) => {
+app.post('/api/register', async (req, res) => {
   const { fullName, email, mobile, password, role } = req.body;
  
   if (!fullName || !email || !mobile || !password || !role) {
@@ -571,7 +571,7 @@ app.post('/register', async (req, res) => {
   return res.json({ message: 'OTP sent successfully' });
 });
 // 👉 POST /verify-otp — verifies OTP and returns mocked token
-app.post('/verify-otp', (req, res) => {
+app.post('/api/verify-otp', (req, res) => {
   const { mobile, otp, fullName, role } = req.body;
  
   if (!mobile || !otp) {
