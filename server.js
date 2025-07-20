@@ -30,7 +30,7 @@ async function sendWhatsAppTemplate(toNumber, leadName, assignedTo, location, re
     to: phoneNumber,
     type: "template",
     template: {
-      name: "lead_message",  // ✅ Your approved template name
+      name: "lead_details",  // ✅ Your approved template name
       language: { code: "en_US" },
       components: [
         {
@@ -72,42 +72,124 @@ async function sendWhatsAppTemplate(toNumber, leadName, assignedTo, location, re
 
 
 
+ 
+// Updated WhatsApp OTP sending function
+
 async function sendWhatsAppOTP(phoneNumber, otpCode) {
-  const payload = {
-    messaging_product: "whatsapp",
-    to: phoneNumber,
-    type: "template",
-    template: {
-      name: "otp_login_code", // ✅ Template name as seen in your Meta dashboard
-      language: { code: "en_US" },
-      components: [
-        {
-          type: "body",
-          parameters: [{ type: "text", text: otpCode }]
-        }
-      ]
-    }
-  };
 
-  try {
-    const res = await axios.post(
-      `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
-          "Content-Type": "application/json"
-        }
-      }
-    );
+  const sanitizedPhone = sanitizePhoneNumber(phoneNumber);
 
-    console.log(`✅ OTP ${otpCode} sent to ${phoneNumber}`);
-    return true;
-  } catch (err) {
-    console.error("❌ Failed to send OTP:", err.response?.data || err.message);
+  if (!sanitizedPhone) {
+
+    console.warn(`⚠️ Invalid phone number for OTP: ${phoneNumber}`);
+
     return false;
+
   }
+ 
+  const payload = {
+
+    messaging_product: "whatsapp",
+
+    to: sanitizedPhone,
+
+    type: "template",
+
+    template: {
+
+      name: "sending_otp", // ✅ Updated to match your actual template name
+
+      language: { code: "en_US" },
+
+      components: [
+
+        {
+
+          type: "body",
+
+          parameters: [
+
+            { type: "text", text: otpCode } // {{1}} - OTP code for body
+
+          ]
+
+        },
+
+        {
+
+          type: "button",
+
+          sub_type: "url",
+
+          index: "0",
+
+          parameters: [
+
+            { type: "text", text: otpCode } // {{1}} - OTP code for button URL
+
+          ]
+
+        }
+
+      ]
+
+    }
+
+  };
+ 
+  try {
+
+    const response = await fetch(
+
+      `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
+
+      {
+
+        method: "POST",
+
+        headers: {
+
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
+
+          "Content-Type": "application/json"
+
+        },
+
+        body: JSON.stringify(payload)
+
+      }
+
+    );
+ 
+    const result = await response.json();
+ 
+    if (response.ok) {
+
+      console.log(`✅ OTP ${otpCode} sent to ${sanitizedPhone}`);
+
+      return true;
+
+    } else {
+
+      console.error(`❌ WhatsApp OTP API error:`, result);
+
+      return false;
+
+    }
+
+  } catch (err) {
+
+    console.error("❌ Exception sending OTP:", err.message);
+
+    return false;
+
+  }
+
 }
+ 
+// API endpoint to send OTP
+
+
 
 
 
@@ -195,6 +277,160 @@ try {
   auth = null;
   sheets = null;
 }
+
+app.post('/api/send-otp', async (req, res) => {
+
+  try {
+
+    const { phoneNumber } = req.body;
+ 
+    if (!phoneNumber) {
+
+      return res.status(400).json({ error: 'Phone number is required' });
+
+    }
+ 
+    // Generate OTP
+
+    const otpCode = generateOTP();
+
+    // Store OTP with expiration (5 minutes)
+
+    const expirationTime = Date.now() + 5 * 60 * 1000; // 5 minutes
+
+    otpStore.set(phoneNumber, { 
+
+      otp: otpCode, 
+
+      expires: expirationTime 
+
+    });
+ 
+    // Send OTP via WhatsApp
+
+    const success = await sendWhatsAppOTP(phoneNumber, otpCode);
+
+    if (success) {
+
+      res.json({ 
+
+        message: 'OTP sent successfully',
+
+        phoneNumber: sanitizePhoneNumber(phoneNumber)
+
+      });
+
+    } else {
+
+      res.status(500).json({ error: 'Failed to send OTP' });
+
+    }
+ 
+  } catch (error) {
+
+    console.error('Send OTP error:', error);
+
+    res.status(500).json({ error: 'Internal server error' });
+
+  }
+
+});
+ 
+// API endpoint to verify OTP
+
+app.post('/api/verify-otp', async (req, res) => {
+
+  try {
+
+    const { phoneNumber, otp } = req.body;
+ 
+    if (!phoneNumber || !otp) {
+
+      return res.status(400).json({ error: 'Phone number and OTP are required' });
+
+    }
+ 
+    const storedData = otpStore.get(phoneNumber);
+
+    if (!storedData) {
+
+      return res.status(400).json({ error: 'No OTP found for this number' });
+
+    }
+ 
+    // Check if OTP has expired
+
+    if (Date.now() > storedData.expires) {
+
+      otpStore.delete(phoneNumber);
+
+      return res.status(400).json({ error: 'OTP has expired' });
+
+    }
+ 
+    // Verify OTP
+
+    if (storedData.otp !== otp) {
+
+      return res.status(400).json({ error: 'Invalid OTP' });
+
+    }
+ 
+    // OTP is valid, remove from store
+
+    otpStore.delete(phoneNumber);
+ 
+    // Here you can add logic to create user account or generate JWT token
+
+    const token = jwt.sign(
+
+      { phoneNumber: sanitizePhoneNumber(phoneNumber) },
+
+      process.env.JWT_SECRET || 'fallback_secret',
+
+      { expiresIn: '24h' }
+
+    );
+ 
+    res.json({
+
+      message: 'OTP verified successfully',
+
+      token,
+
+      phoneNumber: sanitizePhoneNumber(phoneNumber)
+
+    });
+ 
+  } catch (error) {
+
+    console.error('Verify OTP error:', error);
+
+    res.status(500).json({ error: 'Internal server error' });
+
+  }
+
+});
+ 
+// Enhanced OTP store with expiration cleanup
+
+setInterval(() => {
+
+  const now = Date.now();
+
+  for (const [phone, data] of otpStore.entries()) {
+
+    if (now > data.expires) {
+
+      otpStore.delete(phone);
+
+    }
+
+  }
+
+}, 60000); // Clean up expired OTPs every minute
+ 
+ 
 
 // Mock data for development/testing when Google Sheets is not available
 
@@ -317,42 +553,42 @@ async function createUserSheetIfNotExists(userFullName, userRole) {
   }
 }
 
+
 // 1️⃣ API: Send OTP on Registration
 app.post('/register', async (req, res) => {
   const { fullName, email, mobile, password, role } = req.body;
-
+ 
   if (!fullName || !email || !mobile || !password || !role) {
     return res.status(400).json({ error: 'All fields are required' });
   }
-
+ 
   const otp = generateOTP();
-  OTP_STORE.set(mobile, otp);
-
-  const success = await sendWhatsAppOTP(`+91${mobile}`, otp);
+  otpStore.set(mobile, otp); // ✅ Fixed: use otpStore instead of OTP_STORE
+ 
+  const success = await sendWhatsAppOTP(mobile, otp);
   if (!success) return res.status(500).json({ error: 'Failed to send OTP' });
-
+ 
   return res.json({ message: 'OTP sent successfully' });
 });
-
 // 👉 POST /verify-otp — verifies OTP and returns mocked token
 app.post('/verify-otp', (req, res) => {
   const { mobile, otp, fullName, role } = req.body;
-
+ 
   if (!mobile || !otp) {
     return res.status(400).json({ error: 'Mobile and OTP are required' });
   }
-
-  const storedOtp = OTP_STORE.get(mobile);
+ 
+  const storedOtp = otpStore.get(mobile); // ✅ Fixed: use otpStore instead of OTP_STORE
   if (!storedOtp) {
     return res.status(400).json({ error: 'No OTP found for this number' });
   }
-
+ 
   if (storedOtp !== otp) {
     return res.status(400).json({ error: 'Invalid OTP' });
   }
-
-  OTP_STORE.delete(mobile); // Cleanup OTP after verification
-
+ 
+  otpStore.delete(mobile); // ✅ Fixed: use otpStore instead of OTP_STORE
+ 
   return res.json({
     message: 'Registration & Login successful',
     token: 'mocked-jwt-token',
@@ -363,7 +599,6 @@ app.post('/verify-otp', (req, res) => {
     }
   });
 });
-
 
 // 1. Modified Authentication Route with Auto User Creation
 app.post('/api/login', async (req, res) => {
@@ -520,6 +755,9 @@ app.post('/api/assign-leads', authenticateToken, async (req, res) => {
                 headers.forEach((header, idx) => {
                     leadData[header] = row[idx] || '';
                 });
+
+                // Debug log for source field
+                console.log(`Assigning lead ${leadId} with source: ${leadData['Source']}`);
 
                 leadsToAssign.push(leadData);
             }
