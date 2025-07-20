@@ -338,80 +338,7 @@ app.post('/api/send-otp', async (req, res) => {
  
 // API endpoint to verify OTP
 
-app.post('/api/verify-otp', async (req, res) => {
 
-  try {
-
-    const { phoneNumber, otp } = req.body;
- 
-    if (!phoneNumber || !otp) {
-
-      return res.status(400).json({ error: 'Phone number and OTP are required' });
-
-    }
- 
-    const storedData = otpStore.get(phoneNumber);
-
-    if (!storedData) {
-
-      return res.status(400).json({ error: 'No OTP found for this number' });
-
-    }
- 
-    // Check if OTP has expired
-
-    if (Date.now() > storedData.expires) {
-
-      otpStore.delete(phoneNumber);
-
-      return res.status(400).json({ error: 'OTP has expired' });
-
-    }
- 
-    // Verify OTP
-
-    if (storedData.otp !== otp) {
-
-      return res.status(400).json({ error: 'Invalid OTP' });
-
-    }
- 
-    // OTP is valid, remove from store
-
-    otpStore.delete(phoneNumber);
- 
-    // Here you can add logic to create user account or generate JWT token
-
-    const token = jwt.sign(
-
-      { phoneNumber: sanitizePhoneNumber(phoneNumber) },
-
-      process.env.JWT_SECRET || 'fallback_secret',
-
-      { expiresIn: '24h' }
-
-    );
- 
-    res.json({
-
-      message: 'OTP verified successfully',
-
-      token,
-
-      phoneNumber: sanitizePhoneNumber(phoneNumber)
-
-    });
- 
-  } catch (error) {
-
-    console.error('Verify OTP error:', error);
-
-    res.status(500).json({ error: 'Internal server error' });
-
-  }
-
-});
- 
 // Enhanced OTP store with expiration cleanup
 
 setInterval(() => {
@@ -563,7 +490,8 @@ app.post('/api/register', async (req, res) => {
   }
  
   const otp = generateOTP();
-  otpStore.set(mobile, otp); // ✅ Fixed: use otpStore instead of OTP_STORE
+otpStore.set(mobile, { otp, expires: Date.now() + 5 * 60 * 1000 });  // Consistent with send-otp
+// ✅ Fixed: use otpStore instead of OTP_STORE
  
   const success = await sendWhatsAppOTP(mobile, otp);
   if (!success) return res.status(500).json({ error: 'Failed to send OTP' });
@@ -573,25 +501,37 @@ app.post('/api/register', async (req, res) => {
 // 👉 POST /verify-otp — verifies OTP and returns mocked token
 app.post('/api/verify-otp', (req, res) => {
   const { mobile, otp, fullName, role } = req.body;
- 
-  if (!mobile || !otp) {
-    return res.status(400).json({ error: 'Mobile and OTP are required' });
+
+  if (!mobile || !otp || !fullName || !role) {
+    return res.status(400).json({ error: 'Mobile, OTP, Full Name, and Role are required' });
   }
- 
-  const storedOtp = otpStore.get(mobile); // ✅ Fixed: use otpStore instead of OTP_STORE
-  if (!storedOtp) {
+
+  const storedData = otpStore.get(mobile);
+
+  if (!storedData) {
     return res.status(400).json({ error: 'No OTP found for this number' });
   }
- 
-  if (storedOtp !== otp) {
+
+  if (Date.now() > storedData.expires) {
+    otpStore.delete(mobile);
+    return res.status(400).json({ error: 'OTP has expired' });
+  }
+
+  if (storedData.otp !== otp) {
     return res.status(400).json({ error: 'Invalid OTP' });
   }
- 
-  otpStore.delete(mobile); // ✅ Fixed: use otpStore instead of OTP_STORE
- 
+
+  otpStore.delete(mobile);
+
+  const token = jwt.sign(
+    { mobile: sanitizePhoneNumber(mobile), fullName, role },
+    process.env.JWT_SECRET || 'fallback_secret',
+    { expiresIn: '24h' }
+  );
+
   return res.json({
     message: 'Registration & Login successful',
-    token: 'mocked-jwt-token',
+    token,
     user: {
       id: mobile,
       name: fullName,
@@ -599,6 +539,7 @@ app.post('/api/verify-otp', (req, res) => {
     }
   });
 });
+
 
 // 1. Modified Authentication Route with Auto User Creation
 app.post('/api/login', async (req, res) => {
@@ -620,40 +561,13 @@ app.post('/api/login', async (req, res) => {
             u.Role.toLowerCase() === role.toLowerCase()
         );
 
-        if (user) {
-            const isValidPassword = await bcrypt.compare(password, user['Password Hash']);
-            if (!isValidPassword) {
-                return res.status(401).json({ error: 'Invalid credentials' });
-            }
-        } else {
-            const passwordHash = await bcrypt.hash(password, 10);
-            const newUserId = generateUserId();
+        if (!user) {
+            return res.status(401).json({ error: 'User not found. Please register first.' });
+        }
 
-            const newUserData = [
-                newUserId,
-                '',                 // ✅ FullName left empty
-                username,           // ✅ Email used as username
-                '',                 // ✅ Mobile Number blank
-                passwordHash,       // ✅ Password Hash
-                role,
-                new Date().toISOString().split('T')[0],
-                'Active'
-            ];
-
-            await sheets.spreadsheets.values.append({
-                spreadsheetId: CONFIG.USERS_SHEET_ID,
-                range: 'Users!A:H',
-                valueInputOption: 'RAW',
-                insertDataOption: 'INSERT_ROWS',
-                resource: { values: [newUserData] }
-            });
-
-            user = {
-                ID: newUserId,
-                FullName: '',
-                Email: username,
-                Role: role
-            };
+        const isValidPassword = await bcrypt.compare(password, user['Password Hash']);
+        if (!isValidPassword) {
+            return res.status(401).json({ error: 'Invalid credentials' });
         }
 
         const token = jwt.sign({
@@ -671,9 +585,7 @@ app.post('/api/login', async (req, res) => {
                 email: user.Email,
                 role: user.Role
             },
-            message: users.find(u => u.Email.toLowerCase() === username.toLowerCase())
-                ? 'Login successful'
-                : 'Account created and logged in'
+            message: 'Login successful'
         });
 
     } catch (error) {
