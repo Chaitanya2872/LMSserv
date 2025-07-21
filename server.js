@@ -499,11 +499,11 @@ otpStore.set(mobile, { otp, expires: Date.now() + 5 * 60 * 1000 });  // Consiste
   return res.json({ message: 'OTP sent successfully' });
 });
 // 👉 POST /verify-otp — verifies OTP and returns mocked token
-app.post('/api/verify-otp', (req, res) => {
-  const { mobile, otp, fullName, role } = req.body;
+app.post('/api/verify-otp', async (req, res) => {
+  const { mobile, otp, fullName, role, email, password } = req.body;
 
-  if (!mobile || !otp || !fullName || !role) {
-    return res.status(400).json({ error: 'Mobile, OTP, Full Name, and Role are required' });
+  if (!mobile || !otp || !fullName || !role || !email || !password) {
+    return res.status(400).json({ error: 'Mobile, OTP, Full Name, Email, Password, and Role are required' });
   }
 
   const storedData = otpStore.get(mobile);
@@ -523,22 +523,56 @@ app.post('/api/verify-otp', (req, res) => {
 
   otpStore.delete(mobile);
 
-  const token = jwt.sign(
-    { mobile: sanitizePhoneNumber(mobile), fullName, role },
-    process.env.JWT_SECRET || 'fallback_secret',
-    { expiresIn: '24h' }
-  );
+  try {
+    const userId = generateUserId();
+    const createdDate = new Date().toISOString().split('T')[0];
+    const passwordHash = await bcrypt.hash(password, 10);
 
-  return res.json({
-    message: 'Registration & Login successful',
-    token,
-    user: {
-      id: mobile,
-      name: fullName,
-      role: role
-    }
-  });
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: CONFIG.USERS_SHEET_ID,
+      range: 'Users!A:H',
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      resource: {
+        values: [
+          [
+            userId,                         // ID
+            fullName,                       // FullName
+            email,                          // Email
+            sanitizePhoneNumber(mobile),    // Mobile Number
+            passwordHash,                   // Password Hash
+            role,                           // Role
+            createdDate,                    // CreatedDate
+            'active'                        // Status
+          ]
+        ]
+      }
+    });
+
+    console.log(`✅ User ${fullName} registered and saved to Users sheet`);
+
+    const token = jwt.sign(
+      { id: userId, name: fullName, mobile: sanitizePhoneNumber(mobile), role },
+      process.env.JWT_SECRET || 'fallback_secret',
+      { expiresIn: '24h' }
+    );
+
+    return res.json({
+      message: 'Registration & Login successful',
+      token,
+      user: {
+        id: userId,
+        name: fullName,
+        role: role
+      }
+    });
+
+  } catch (err) {
+    console.error('❌ Error saving user to Users sheet:', err);
+    return res.status(500).json({ error: 'Failed to save user to Users sheet' });
+  }
 });
+
 
 
 // 1. Modified Authentication Route with Auto User Creation
